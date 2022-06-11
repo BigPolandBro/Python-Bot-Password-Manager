@@ -12,7 +12,8 @@ class PasswordBot:
         self.__bot = bot
         self.__table = table
 
-    def gen_markup_actions(self):
+    @staticmethod
+    def gen_markup_actions():
         markup = InlineKeyboardMarkup()
         markup.row_width = 2
         markup.add(InlineKeyboardButton("Add new password", callback_data="cb_add"),
@@ -22,9 +23,30 @@ class PasswordBot:
         return markup
 
     def process_start_menu(self, message):
-        self.__bot.send_message(message.chat.id, "Hello, this is your personal bot for working with "
-                                                 "your website passwords. Choose an action from buttons below",
-                                                  reply_markup=self.gen_markup_actions())
+        self.__bot.send_message(message.chat.id, "Hello, this is your FREE personal bot for working with your website passwords.\n"
+                                                 "I mean, I'm just a password manager.\n"
+                                                 "I can store, change, delete, display your passwords.\n"
+                                                 "I will keep them encrypted, so don't be afraid that someone will steal them.\n"
+                                                 "But for all this, I need a secret key from you.")
+        self.process_key_info(message)
+        self.process_action_menu(message)
+
+    def process_key_info(self, message):
+        self.__bot.send_message(message.chat.id, "ABOUT KEY.\n"
+                                                 "You should have the key, that will be used for encoding/decoding your passwords.\n"
+                                                 "Once you use it for encryption, you need to remember it forever.\n"
+                                                 "Otherwise you will lose access to your passwords, it will be impossible to recover them.\n"
+                                                 "You have the possibility to change the key at every moment. It is a good practice for safety.\n"
+                                                 "If it is the first time you use this manager, come up with a good key.\n"
+                                                 "The key is the password to your passwords. The key must be a string of characters.\n"
+                                                 "Your key should be somewhat secure:\n" 
+                                                 "--- Do not use very short key!\n"
+                                                 "--- Do not use common words and phrases!\n"
+                                                 "It is your responsibility to remember your key, I don't keep it anywhere.\n"
+                                                 "It should be not only secure, but also memorable.\n"
+                                                 "Create key based on phrases that mean something to you, and you will easily remember it.\n"
+                                                 "Do not forget you key!\n" 
+                                                 "I will ask it every time you want to interact with your passwords or change the key.\n")
 
     def process_action_menu(self, message):
         self.__bot.send_message(message.chat.id, "Choose what you want to do:",
@@ -32,8 +54,10 @@ class PasswordBot:
 
     def process_idk(self, message):
         self.__bot.reply_to(message,
-                                "I don't get you! Please, use command /start to start work or /actions "
-                                "to view possible actions.")
+                                "I don't get you! Please, use commands:\n"
+                                " /start to start bot\n"
+                                " /key to view important information about secret key\n"
+                                " /actions to view what I can do\n")
 
     def process_smth_went_wrong(self, message):
         self.__bot.reply_to(message,
@@ -41,31 +65,57 @@ class PasswordBot:
 
     def add_action(self, call):
         self.__bot.answer_callback_query(call.id, "Let's save it")
-        site_message = self.__bot.send_message(call.message.chat.id, "Print the website:")
-        self.__bot.register_next_step_handler(site_message, self.process_site_step, call.data)
+        self.process_first_step(call)
 
     def get_action(self, call):
         self.__bot.answer_callback_query(call.id, "Let's get it")
-        site_message = self.__bot.send_message(call.message.chat.id, "Print the website:")
-        self.__bot.register_next_step_handler(site_message, self.process_site_step, call.data)
+        self.process_first_step(call)
 
     def update_action(self, call):
         self.__bot.answer_callback_query(call.id, "Let's update it")
-        site_message = self.__bot.send_message(call.message.chat.id, "Print the website:")
-        self.__bot.register_next_step_handler(site_message, self.process_site_step, call.data)
+        self.process_first_step(call)
 
     def delete_action(self, call):
         self.__bot.answer_callback_query(call.id, "Let's delete it")
-        site_message = self.__bot.send_message(call.message.chat.id, "Print the website:")
-        self.__bot.register_next_step_handler(site_message, self.process_site_step, call.data)
+        self.process_first_step(call)
 
-    def process_site_step(self, message, cb_data):
+    def process_first_step(self, call):
+        user = User(call.message.chat.id, "no key")
+        if self.__table.empty(user):
+            self.__bot.send_message(call.message.chat.id, "Now I will ask you to enter your first key. Be careful."
+                                                          "Nothing is possible without a valid key.")
+        key_message = self.__bot.send_message(call.message.chat.id, "Print your secret key:")
+        self.__bot.register_next_step_handler(key_message, self.process_key_step, user, call.data)
+
+    def process_key_step(self, message, user, cb_data):
+        key = message.text
+        user.set_key(key)
+
+        if not user.check_key():
+            self.__bot.send_message(message.chat.id, "You should print only text messages."
+                                                     "You may press /key to see more information. Come on again.")
+            self.process_action_menu(message)
+            return
+
+        if not self.__table.check_user_key(user):
+            self.__bot.send_message(message.chat.id, "You know, I already have several passwords in store. You kept them with a different key.\n"
+                                                     "Recall key! Press /key to see more information or /actions to try again.")
+            return
+
+        site_message = self.__bot.send_message(message.chat.id, "Print the website:")
+        self.__bot.register_next_step_handler(site_message, self.process_site_step, user, cb_data)
+
+    def process_site_step(self, message, user, cb_data):
         site = message.text
         info = Info(site, site)
 
+        if not info.check_data():
+            self.__bot.send_message(message.chat.id, "You should print only text messages. Come on again.")
+            self.process_action_menu(message)
+            return
+
         if cb_data == "cb_delete":
             try:
-                user = User(message.chat.id)
                 result = self.__table.delete(user, info)
                 self.__bot.send_message(message.chat.id, result)
             except Exception as e:
@@ -75,7 +125,6 @@ class PasswordBot:
 
         if cb_data == "cb_get":
             try:
-                user = User(message.chat.id)
                 result = self.__table.get(user, info)
                 self.__bot.send_message(message.chat.id, result)
             except Exception as e:
@@ -84,17 +133,23 @@ class PasswordBot:
             return
 
         password_message = self.__bot.send_message(message.chat.id, "Print password for this site:")
-        self.__bot.register_next_step_handler(password_message, self.process_password_step, info, cb_data)
+        self.__bot.register_next_step_handler(password_message, self.process_password_step, user, info, cb_data)
 
-    def process_password_step(self, message, info, cb_data):
+    def process_password_step(self, message, user, info, cb_data):
+        password = message.text
+        info.set_password(password)
+
+        if not info.check_data():
+            self.__bot.send_message(message.chat.id, "You should print only text messages. Come on again.")
+            self.process_action_menu(message)
+            return
+
+        if cb_data == "cb_add":
+            result = self.__table.add(user, info)
+            self.__bot.send_message(message.chat.id, result)
+
         try:
-            password = message.text
-            info.set_password(password)
-            user = User(message.chat.id)
 
-            if cb_data == "cb_add":
-                result = self.__table.add(user, info)
-                self.__bot.send_message(message.chat.id, result)
 
             if cb_data == "cb_update":
                 result = self.__table.update(user, info)

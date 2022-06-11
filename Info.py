@@ -15,3 +15,6 @@ class Info:
     def get_password(self):
         return self.__password
 
+    def check_data(self):
+        return type(self.__site) == str and type(self.__password) == str
+
