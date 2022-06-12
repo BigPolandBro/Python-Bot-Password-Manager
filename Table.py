@@ -5,6 +5,9 @@ from PasswordCipher import PasswordCipher
 
 gc = gspread.service_account(filename="for-work-with-python-447d976bc7e4.json")
 
+ROWS_NUMBER = "rows_number"
+KEY_HASH = "key_hash"
+
 class Table:
 
     def __init__(self, name):
@@ -12,6 +15,8 @@ class Table:
         self.repo = self.common_repo.sheet1
         self.rows_number_cell = self.repo.cell(1, 4)
         self.rows_number = 0
+        self.key_hash_cell = self.repo.cell(2, 4)
+        self.key_hash = "no hash"
 
     def set_repo(self, user):
         id = user.get_id()
@@ -21,42 +26,101 @@ class Table:
             self.repo = self.common_repo.worksheet(title)
         else:
             self.repo = self.common_repo.add_worksheet(title, 1000, 4)
-            self.repo.update_cell(1, 3, "rows_number")
+            self.repo.update_cell(1, 3, ROWS_NUMBER)
+            self.repo.update_cell(2, 3, KEY_HASH)
             self.repo.update_cell(1, 4, 0)
 
-        self.set_rows_number()
+        self.set_rows_number_cell()
+        self.set_key_hash_cell()
 
-    def set_rows_number(self):
+    def set_rows_number_cell(self):
         self.rows_number_cell = self.get_rows_number_cell()
         self.rows_number = int(self.rows_number_cell.value)
 
+    def set_key_hash_cell(self):
+        self.key_hash_cell = self.get_key_hash_cell()
+        self.key_hash = self.key_hash_cell.value
+
     def get_rows_number_cell(self):
-        rows_number_cell = self.repo.find("rows_number")
-        rows_number_cell = self.repo.cell(rows_number_cell.row, rows_number_cell.col + 1)
+        rows_number_cell = self.repo.cell(1, 4)
         return rows_number_cell
+
+    def get_key_hash_cell(self):
+        key_hash_cell = self.repo.cell(2, 4)
+        return key_hash_cell
 
     def update_rows_number_cell(self):
         self.repo.update_cell(self.rows_number_cell.row, self.rows_number_cell.col, self.rows_number)
+
+    def update_key_hash_cell(self):
+        self.repo.update_cell(self.key_hash_cell.row, self.key_hash_cell.col, self.key_hash)
 
     def empty(self, user):
         self.set_repo(user)
         return self.rows_number == 0
 
+    def check_no_key(self, user):
+        self.set_repo(user)
+        return self.key_hash is None
+
     def check_user_key(self, user):
         self.set_repo(user)
-
-        if self.empty(user):
+        if self.key_hash is None:
             return True
 
         cipher = PasswordCipher(user)
-        last_password_cell = self.repo.cell(self.rows_number, 2)
-        encrypted_password = last_password_cell.value
-        return cipher.check_cipher(encrypted_password)
+        return cipher.get_cipher_key_hash() == bytes(self.key_hash, "utf-8")
+
+    @staticmethod
+    def is_reserved(name):
+        return name == ROWS_NUMBER or name == KEY_HASH
+
+    def add_key(self, user):
+        self.set_repo(user)
+        cipher = PasswordCipher(user)
+        self.key_hash = cipher.get_cipher_key_hash().decode("utf-8")
+        self.update_key_hash_cell()
+
+    def change_key(self, user, new_user):
+        self.set_repo(new_user)
+
+        cipher = PasswordCipher(user)
+        new_cipher = PasswordCipher(new_user)
+
+        self.key_hash = new_cipher.get_cipher_key_hash().decode("utf-8")
+        self.update_key_hash_cell()
+
+        for row in range(1, self.rows_number + 1):
+            password_cell = self.repo.cell(row, 2)
+            encrypted_password = password_cell.value
+            password = cipher.decrypt_password(encrypted_password)
+            encrypted_password = new_cipher.encrypt_password(password)
+            self.repo.update_cell(row, 2, encrypted_password)
+
+        return "Ok, secret key has been successfully changed."
+
+    def get_all_sites(self, user):
+        self.set_repo(user)
+        sites_list = []
+        for row in range(1, self.rows_number + 1):
+            site_cell = self.repo.cell(row, 1)
+            site = site_cell.value
+            sites_list.append(site)
+
+        sites_list.sort()
+
+        result = "Your websites:\n"
+        for site in sites_list:
+            result += "-> " + site + "\n"
+        return result
 
     def add(self, user, info):
         self.set_repo(user)
         site = info.get_site()
         password = info.get_password()
+
+        if self.is_reserved(site):
+            return "Sorry, this name is reserved by me. Please, use another one."
 
         cell = self.repo.find(site)
         if cell is not None:
@@ -133,3 +197,4 @@ class Table:
         self.repo.batch_clear([range])
         self.rows_number -= 1
         self.update_rows_number_cell()
+

@@ -19,7 +19,9 @@ class PasswordBot:
         markup.add(InlineKeyboardButton("Add new password", callback_data="cb_add"),
                    InlineKeyboardButton("Get existing password", callback_data="cb_get"),
                    InlineKeyboardButton("Update password", callback_data="cb_update"),
-                   InlineKeyboardButton("Delete password", callback_data="cb_delete"))
+                   InlineKeyboardButton("Delete password", callback_data="cb_delete"),
+                   InlineKeyboardButton("Change secret key", callback_data="cb_change_key"),
+                   InlineKeyboardButton("Show all my sites", callback_data="cb_all_sites"))
         return markup
 
     def process_start_menu(self, message):
@@ -79,12 +81,23 @@ class PasswordBot:
         self.__bot.answer_callback_query(call.id, "Let's delete it")
         self.process_first_step(call)
 
+    def change_key_action(self, call):
+        self.__bot.answer_callback_query(call.id, "Let's change key")
+        self.process_first_step(call)
+
+    def show_all_sites_action(self, call):
+        self.__bot.answer_callback_query(call.id, "Ok, I will show you")
+        self.process_first_step(call)
+
     def process_first_step(self, call):
         user = User(call.message.chat.id, "no key")
-        if self.__table.empty(user):
+
+        key_status = "current"
+        if self.__table.check_no_key(user):
             self.__bot.send_message(call.message.chat.id, "Now I will ask you to enter your first key. Be careful."
                                                           "Nothing is possible without a valid key.")
-        key_message = self.__bot.send_message(call.message.chat.id, "Print your secret key:")
+            key_status = "first"
+        key_message = self.__bot.send_message(call.message.chat.id, "Print your " + key_status + " secret key:")
         self.__bot.register_next_step_handler(key_message, self.process_key_step, user, call.data)
 
     def process_key_step(self, message, user, cb_data):
@@ -97,13 +110,49 @@ class PasswordBot:
             self.process_action_menu(message)
             return
 
-        if not self.__table.check_user_key(user):
-            self.__bot.send_message(message.chat.id, "You know, I already have several passwords in store. You kept them with a different key.\n"
-                                                     "Recall key! Press /key to see more information or /actions to try again.")
+        first_key = False
+        if self.__table.check_no_key(user):
+            self.__table.add_key(user)
+            self.__bot.send_message(message.chat.id, "Your first key has been successfully added.")
+            first_key = True
+        else:
+            if not self.__table.check_user_key(user):
+                self.__bot.send_message(message.chat.id, "You used a different key before."
+                                                         "I can't let you do anything until you remember it.\n"
+                                                         "Press /key to see more information or /actions to try again.")
+                return
+
+        if cb_data == "cb_change_key":
+            if first_key:
+                self.process_action_menu(message)
+            else:
+                new_key_message = self.__bot.send_message(message.chat.id, "Print new secret key:")
+                self.__bot.register_next_step_handler(new_key_message, self.process_key_change_step, user, cb_data)
+            return
+
+        if cb_data == "cb_all_sites":
+            try:
+                result = self.__table.get_all_sites(user)
+                self.__bot.send_message(message.chat.id, result)
+            except Exception as e:
+                self.process_smth_went_wrong(message)
+            self.process_action_menu(message)
             return
 
         site_message = self.__bot.send_message(message.chat.id, "Print the website:")
         self.__bot.register_next_step_handler(site_message, self.process_site_step, user, cb_data)
+
+    def process_key_change_step(self, message, user, cb_data):
+        new_key = message.text
+        new_user = User(user.get_id(), new_key)
+
+        #try:
+        result = self.__table.change_key(user, new_user)
+        self.__bot.send_message(message.chat.id, result)
+        #except Exception as e:
+            #self.process_smth_went_wrong(message)
+        self.process_action_menu(message)
+        return
 
     def process_site_step(self, message, user, cb_data):
         site = message.text
@@ -144,12 +193,10 @@ class PasswordBot:
             self.process_action_menu(message)
             return
 
-        if cb_data == "cb_add":
-            result = self.__table.add(user, info)
-            self.__bot.send_message(message.chat.id, result)
-
         try:
-
+            if cb_data == "cb_add":
+                result = self.__table.add(user, info)
+                self.__bot.send_message(message.chat.id, result)
 
             if cb_data == "cb_update":
                 result = self.__table.update(user, info)
@@ -164,6 +211,10 @@ class PasswordBot:
         @self.__bot.message_handler(commands=["start"])
         def message_handler_start(message, res=False):
             self.process_start_menu(message)
+
+        @self.__bot.message_handler(commands=["key"])
+        def message_handler_actions(message, res=False):
+            self.process_key_info(message)
 
         @self.__bot.message_handler(commands=["actions"])
         def message_handler_actions(message, res=False):
@@ -183,6 +234,10 @@ class PasswordBot:
                 self.update_action(call)
             elif call.data == "cb_delete":
                 self.delete_action(call)
+            elif call.data == "cb_change_key":
+                self.change_key_action(call)
+            elif call.data == "cb_all_sites":
+                self.show_all_sites_action(call)
 
             self.__bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id)
 

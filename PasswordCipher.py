@@ -8,15 +8,20 @@ class PasswordCipher:
     def __init__(self, user):
         salt = bytes(str(user.get_id()), "utf-8")
         key = bytes(user.get_key(), "utf-8")
-        cipher_key = self.set_cipher_key(key, salt)
+        cipher_key = self.calc_key_hash(key, salt)
+        self.__cipher_key_hash = self.calc_key_hash(cipher_key, salt)
         self.__cipher = Fernet(cipher_key)
 
-    def set_cipher_key(self, key, salt):
+    def get_cipher_key_hash(self):
+        return self.__cipher_key_hash
+
+    @staticmethod
+    def calc_key_hash(key, salt):
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=390000,
+            iterations=3900,
         )
         cipher_key = base64.urlsafe_b64encode(kdf.derive(key))
         return cipher_key
@@ -39,3 +44,4 @@ class PasswordCipher:
         bytes_password = self.__cipher.decrypt(bytes_encrypted_password)
         str_password = bytes_password.decode("utf-8")
         return str_password
+
